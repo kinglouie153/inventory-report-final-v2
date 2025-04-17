@@ -18,6 +18,23 @@ const Button = (props) => (
     className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
   />
 );
+const handleGenerateMismatchReport = () => {
+  const mismatched = entries.filter(
+    (e) => e.count !== undefined && e.count !== null && e.count !== e.on_hand
+  );
+  const csvRows = ["SKU,On Hand,Count,Difference"];
+  mismatched.forEach((e) => {
+    const diff = e.count - e.on_hand;
+    csvRows.push(`${e.sku},${e.on_hand},${e.count},${diff}`);
+  });
+  const blob = new Blob([csvRows.join("\n")], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `Mismatch_Report_${Date.now()}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+};
 
 export default function InventoryApp({ session }) {
   const { username, role } = session;
@@ -55,7 +72,7 @@ export default function InventoryApp({ session }) {
   const handleUpload = async (e) => {
     const file = e.target.files[0];
     if (!file || selectedUsers.length === 0) return;
-
+  
     const reader = new FileReader();
     reader.onload = async (evt) => {
       const data = evt.target.result;
@@ -63,20 +80,23 @@ export default function InventoryApp({ session }) {
       const sheetName = workbook.SheetNames[0];
       const worksheet = workbook.Sheets[sheetName];
       const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-
+  
       const rows = jsonData.slice(1);
-
+  
       const { data: fileInsert, error: fileErr } = await supabase
         .from("files")
         .insert([{ uploaded_by: currentUser }])
         .select()
         .single();
-
-      if (fileErr || !fileInsert) return;
-
+  
+      if (fileErr || !fileInsert) {
+        console.error("File upload error:", fileErr);
+        return;
+      }
+  
       const file_id = fileInsert.id;
       setFileId(file_id);
-
+  
       const chunkSize = Math.ceil(rows.length / selectedUsers.length);
       const assignedEntries = rows.map((row, index) => {
         const userIndex = Math.floor(index / chunkSize);
@@ -88,22 +108,31 @@ export default function InventoryApp({ session }) {
           assigned_to: selectedUsers[userIndex] || selectedUsers[selectedUsers.length - 1],
         };
       });
-
-      await supabase.from("entries").insert(assignedEntries);
+  
+      const { error: insertErr } = await supabase.from("entries").insert(assignedEntries);
+      if (insertErr) {
+        console.error("Entries insert error:", insertErr);
+        return;
+      }
+  
       loadEntries(file_id);
     };
     reader.readAsBinaryString(file);
   };
-
+  
   const loadEntries = async (id) => {
     const filter = userRole === "admin" ? { file_id: id } : { file_id: id, assigned_to: currentUser };
     const { data, error } = await supabase.from("entries").select("*").match(filter);
-    if (!error) {
-      setEntries(data);
-      setFileId(id);
+  
+    if (error) {
+      console.error("Error loading entries:", error);
+      return;
     }
+  
+    setEntries(data);
+    setFileId(id);
   };
-
+  
   const handleInputChange = async (entryId, value, index) => {
     const newEntries = [...entries];
     const entry = newEntries.find((e) => e.id === entryId);
