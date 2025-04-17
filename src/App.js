@@ -18,23 +18,6 @@ const Button = (props) => (
     className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
   />
 );
-const handleGenerateMismatchReport = () => {
-  const mismatched = entries.filter(
-    (e) => e.count !== undefined && e.count !== null && e.count !== e.on_hand
-  );
-  const csvRows = ["SKU,On Hand,Count,Difference"];
-  mismatched.forEach((e) => {
-    const diff = e.count - e.on_hand;
-    csvRows.push(`${e.sku},${e.on_hand},${e.count},${diff}`);
-  });
-  const blob = new Blob([csvRows.join("\n")], { type: "text/csv" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `Mismatch_Report_${Date.now()}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
-};
 
 export default function InventoryApp({ session }) {
   const { username, role } = session;
@@ -72,7 +55,7 @@ export default function InventoryApp({ session }) {
   const handleUpload = async (e) => {
     const file = e.target.files[0];
     if (!file || selectedUsers.length === 0) return;
-  
+
     const reader = new FileReader();
     reader.onload = async (evt) => {
       const data = evt.target.result;
@@ -80,23 +63,23 @@ export default function InventoryApp({ session }) {
       const sheetName = workbook.SheetNames[0];
       const worksheet = workbook.Sheets[sheetName];
       const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-  
+
       const rows = jsonData.slice(1);
-  
+
       const { data: fileInsert, error: fileErr } = await supabase
         .from("files")
         .insert([{ uploaded_by: currentUser }])
         .select()
         .single();
-  
+
       if (fileErr || !fileInsert) {
         console.error("File upload error:", fileErr);
         return;
       }
-  
+
       const file_id = fileInsert.id;
       setFileId(file_id);
-  
+
       const chunkSize = Math.ceil(rows.length / selectedUsers.length);
       const assignedEntries = rows.map((row, index) => {
         const userIndex = Math.floor(index / chunkSize);
@@ -108,31 +91,31 @@ export default function InventoryApp({ session }) {
           assigned_to: selectedUsers[userIndex] || selectedUsers[selectedUsers.length - 1],
         };
       });
-  
+
       const { error: insertErr } = await supabase.from("entries").insert(assignedEntries);
       if (insertErr) {
         console.error("Entries insert error:", insertErr);
         return;
       }
-  
+
       loadEntries(file_id);
     };
     reader.readAsBinaryString(file);
   };
-  
+
   const loadEntries = async (id) => {
     const filter = userRole === "admin" ? { file_id: id } : { file_id: id, assigned_to: currentUser };
     const { data, error } = await supabase.from("entries").select("*").match(filter);
-  
+
     if (error) {
       console.error("Error loading entries:", error);
       return;
     }
-  
+
     setEntries(data);
     setFileId(id);
   };
-  
+
   const handleInputChange = async (entryId, value, index) => {
     const newEntries = [...entries];
     const entry = newEntries.find((e) => e.id === entryId);
@@ -153,6 +136,24 @@ export default function InventoryApp({ session }) {
     if (diff <= 10) return "border-yellow-400";
     if (diff <= 20) return "border-orange-400";
     return "border-red-500";
+  };
+
+  const handleGenerateMismatchReport = () => {
+    const mismatched = entries.filter(
+      (e) => e.count !== undefined && e.count !== null && e.count !== e.on_hand
+    );
+    const csvRows = ["SKU,On Hand,Count,Difference,User"];
+    mismatched.forEach((e) => {
+      const diff = e.count - e.on_hand;
+      csvRows.push(`${e.sku},${e.on_hand},${e.count},${diff},${e.assigned_to}`);
+    });
+    const blob = new Blob([csvRows.join("\n")], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `Mismatch_Report_${Date.now()}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   const handleDownloadMissingCounts = () => {
@@ -209,30 +210,6 @@ export default function InventoryApp({ session }) {
         <div className="text-gray-700 text-sm">Logged in as: {currentUser} ({userRole})</div>
         <Button onClick={() => supabase.auth.signOut()}>Logout</Button>
       </div>
-
-      {userRole === "admin" && (
-        <div>
-          <h2 className="text-xl font-semibold mb-2">Upload Inventory File</h2>
-          <input type="file" onChange={handleUpload} className="mb-2" />
-          <div className="mb-4">
-            <label className="block mb-1">Select Active Users:</label>
-            <select
-              multiple
-              value={selectedUsers}
-              onChange={(e) =>
-                setSelectedUsers(Array.from(e.target.selectedOptions, (opt) => opt.value))
-              }
-              className="border rounded p-2 w-full"
-            >
-              {userList.map((u) => (
-                <option key={u} value={u}>
-                  {u}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-      )}
 
       <div>
         <label className="block mb-1 font-semibold">Select Report:</label>
