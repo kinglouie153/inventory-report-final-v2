@@ -211,6 +211,30 @@ export default function InventoryApp({ session }) {
         <Button onClick={() => supabase.auth.signOut()}>Logout</Button>
       </div>
 
+      {userRole === "admin" && (
+        <div>
+          <h2 className="text-xl font-semibold mb-2">Upload Inventory File</h2>
+          <input type="file" onChange={handleUpload} className="mb-2" />
+          <div className="mb-4">
+            <label className="block mb-1">Select Active Users:</label>
+            <select
+              multiple
+              value={selectedUsers}
+              onChange={(e) =>
+                setSelectedUsers(Array.from(e.target.selectedOptions, (opt) => opt.value))
+              }
+              className="border rounded p-2 w-full"
+            >
+              {userList.map((u) => (
+                <option key={u} value={u}>
+                  {u}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      )}
+
       <div>
         <label className="block mb-1 font-semibold">Select Report:</label>
         <select
@@ -246,7 +270,7 @@ export default function InventoryApp({ session }) {
                     <td className="border px-2 py-1 font-semibold">{entry.sku}</td>
                     {userRole === "admin" && <td className="border px-2 py-1">{entry.on_hand}</td>}
                     <td className="border px-2 py-1">
-                      {entry.assigned_to === currentUser ? (
+                      {entry.assigned_to === currentUser || userRole === "admin" ? (
                         <Input
                           ref={(el) => (inputRefs.current[index] = el)}
                           type="number"
