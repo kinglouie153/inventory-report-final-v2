@@ -53,6 +53,7 @@ export default function InventoryApp({ session }) {
   };
 
   const handleUpload = async (e) => {
+    console.clear();
     const file = e.target.files[0];
     if (!file || selectedUsers.length === 0) return;
 
@@ -65,6 +66,11 @@ export default function InventoryApp({ session }) {
       const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
 
       const rows = jsonData.slice(1);
+      console.log("Parsed rows:", rows);
+      if (rows.length === 0) {
+        alert("No rows found in file.");
+        return;
+      }
 
       const { data: fileInsert, error: fileErr } = await supabase
         .from("files")
@@ -82,10 +88,12 @@ export default function InventoryApp({ session }) {
 
       const chunkSize = Math.ceil(rows.length / selectedUsers.length);
       const assignedEntries = rows.map((row, index) => {
+        console.log("Assigning row:", row);
         const userIndex = Math.floor(index / chunkSize);
         return {
-          file_id,
-          sku: row[0],
+        file_id,
+        upload_index: index, // store the order of the spreadsheet
+        sku: row[0],
           on_hand: parseInt(row[1]),
           description: row[3] || "",
           assigned_to: selectedUsers[userIndex] || selectedUsers[selectedUsers.length - 1],
@@ -93,8 +101,10 @@ export default function InventoryApp({ session }) {
       });
 
       const { error: insertErr } = await supabase.from("entries").insert(assignedEntries);
+      console.log("Inserting entries:", assignedEntries);
       if (insertErr) {
         console.error("Entries insert error:", insertErr);
+        alert("Upload failed: " + insertErr.message);
         return;
       }
 
@@ -104,15 +114,45 @@ export default function InventoryApp({ session }) {
   };
 
   const loadEntries = async (id) => {
-    const filter = userRole === "admin" ? { file_id: id } : { file_id: id, assigned_to: currentUser };
-    const { data, error } = await supabase.from("entries").select("*").match(filter);
+    const allData = [];
+    const chunkSize = 1000;
+    let from = 0;
+    let to = chunkSize - 1;
+    let keepGoing = true;
 
-    if (error) {
-      console.error("Error loading entries:", error);
-      return;
+    while (keepGoing) {
+      let query = supabase
+        .from("entries")
+        .select("*", { count: "exact" })
+        .order("upload_index", { ascending: true })
+        .range(from, to);
+
+      if (userRole === "admin") {
+        query = query.eq("file_id", id);
+      } else {
+        query = query.eq("file_id", id).eq("assigned_to", currentUser);
+      }
+
+      const { data, error } = await query;
+
+      if (error) {
+        console.error("Error loading entries:", error);
+        break;
+      }
+
+      if (data.length > 0) {
+        allData.push(...data);
+      }
+
+      if (data.length < chunkSize) {
+        keepGoing = false;
+      } else {
+        from += chunkSize;
+        to += chunkSize;
+      }
     }
 
-    setEntries(data);
+    setEntries(allData);
     setFileId(id);
   };
 
@@ -177,19 +217,29 @@ export default function InventoryApp({ session }) {
 
   const handlePrintMyRows = () => {
     const myEntries = entries.filter((e) => e.assigned_to === currentUser);
-    const half = Math.ceil(myEntries.length / 2);
-    const left = myEntries.slice(0, half);
-    const right = myEntries.slice(half);
-    const lines = [];
-    for (let i = 0; i < half; i++) {
-      const leftText = left[i] ? `${left[i].sku}`.padEnd(20) + "_____________" : "";
-      const rightText = right[i] ? `${right[i].sku}`.padEnd(20) + "_____________" : "";
-      lines.push(`${leftText.padEnd(50)}${rightText}`);
-    }
-    const printWindow = window.open("", "_blank");
-    printWindow.document.write("<pre style='font-family: monospace;'>" + lines.join("\n") + "</pre>");
-    printWindow.print();
-    printWindow.close();
+    const printWindow = window.open("", "_blank", "width=800,height=600");
+    const content = `
+      <html>
+        <head><title>My Assigned Rows</title></head>
+        <body>
+          <h2>Assigned SKUs for ${currentUser}</h2>
+          <table border="1" cellspacing="0" cellpadding="6">
+            <thead><tr><th>SKU</th><th>Physical Count</th></tr></thead>
+            <tbody>
+              ${myEntries.map(e => `
+                <tr>
+                  <td>${e.sku}</td>
+                  <td>_____________</td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+          <script>window.onload = function() { window.print(); }</script>
+        </body>
+      </html>
+    `;
+    printWindow.document.write(content);
+    printWindow.document.close();
   };
 
   const focusNextEditableInput = (startIndex) => {
@@ -205,7 +255,7 @@ export default function InventoryApp({ session }) {
   };
 
   return (
-    <div className="p-6 max-w-6xl mx-auto space-y-4">
+    <div className="p-6 w-full space-y-4">
       <div className="flex justify-between">
         <div className="text-gray-700 text-sm">Logged in as: {currentUser} ({userRole})</div>
         <Button onClick={() => supabase.auth.signOut()}>Logout</Button>
@@ -253,68 +303,47 @@ export default function InventoryApp({ session }) {
         </select>
       </div>
 
-      {entries.length > 0 && (
-        <>
-          <div className="overflow-x-auto">
-            <table className="min-w-full border mt-4">
-              <thead>
-                <tr>
-                  <th className="border px-2 py-1">SKU</th>
-                  {userRole === "admin" && <th className="border px-2 py-1">On Hand</th>}
-                  <th className="border px-2 py-1">Count</th>
+      {entries.length > 0 ? (
+        <div className="overflow-x-auto">
+          <table className="min-w-full border mt-4">
+            <thead>
+              <tr>
+                <th className="border px-2 py-1">SKU</th>
+                {userRole === "admin" && <th className="border px-2 py-1">On Hand</th>}
+                <th className="border px-2 py-1">Count</th>
+              </tr>
+            </thead>
+            <tbody>
+              {entries.map((entry, index) => (
+                <tr key={entry.id}>
+                  <td className="border px-2 py-1 font-semibold">{entry.sku}</td>
+                  {userRole === "admin" && <td className="border px-2 py-1">{entry.on_hand}</td>}
+                  <td className="border px-2 py-1">
+                    {entry.assigned_to === currentUser || userRole === "admin" ? (
+                      <Input
+                        ref={(el) => (inputRefs.current[index] = el)}
+                        type="number"
+                        value={entry.count ?? ""}
+                        onChange={(e) => handleInputChange(entry.id, e.target.value, index)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            focusNextEditableInput(index);
+                          }
+                        }}
+                        className={getInputClass(entry.count, entry.on_hand)}
+                      />
+                    ) : (
+                      entry.count ?? "NA"
+                    )}
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {entries.map((entry, index) => (
-                  <tr key={entry.id}>
-                    <td className="border px-2 py-1 font-semibold">{entry.sku}</td>
-                    {userRole === "admin" && <td className="border px-2 py-1">{entry.on_hand}</td>}
-                    <td className="border px-2 py-1">
-                      {entry.assigned_to === currentUser || userRole === "admin" ? (
-                        <Input
-                          ref={(el) => (inputRefs.current[index] = el)}
-                          type="number"
-                          value={entry.count ?? ""}
-                          onChange={(e) => handleInputChange(entry.id, e.target.value, index)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") {
-                              e.preventDefault();
-                              focusNextEditableInput(index);
-                            }
-                          }}
-                          className={getInputClass(entry.count, entry.on_hand)}
-                        />
-                      ) : (
-                        entry.count ?? "NA"
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="text-sm text-gray-600 mt-4">
-            <strong>Legend:</strong> <span className="text-green-600">Green = Exact</span>,
-            <span className="text-yellow-600"> Yellow = Small diff</span>,
-            <span className="text-orange-600"> Orange = Med diff</span>,
-            <span className="text-red-600"> Red = Large diff</span>
-          </div>
-        </>
-      )}
-
-      {userRole === "admin" && entries.length > 0 && (
-        <div className="flex gap-2">
-          <Button onClick={handleGenerateMismatchReport}>Generate Report</Button>
-          <Button onClick={handleDownloadMissingCounts}>Download Missing Counts PDF</Button>
+              ))}
+            </tbody>
+          </table>
         </div>
-      )}
-
-      {userRole === "user" && entries.length > 0 && (
-        <div className="flex gap-2">
-          <Button onClick={handleDownloadMissingCounts}>Show Missing Counts</Button>
-          <Button onClick={handlePrintMyRows}>Print My Rows</Button>
-        </div>
+      ) : (
+        <p className="text-gray-500">No report selected or no entries available yet.</p>
       )}
     </div>
   );
