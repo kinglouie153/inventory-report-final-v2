@@ -130,6 +130,7 @@ export default function InventoryApp({ session }) {
       }
 
       const { data, error } = await query;
+console.log("Loaded entries:", data);
 
       if (error) {
         console.error("Error loading entries:", error);
@@ -162,7 +163,15 @@ export default function InventoryApp({ session }) {
     await supabase
       .from("entries")
       .update({ count: entry.count, entered_by: currentUser })
-      .eq("id", entryId);
+      .eq("id", entryId)
+      .then(({ error }) => {
+        if (error) {
+          console.error("Error saving count:", error);
+          alert("Failed to save count. See console for details.");
+        } else {
+          console.log("Saved count for entry ID", entryId, "=", entry.count);
+        }
+      });
   };
 
   const getInputClass = (count, onHand) => {
@@ -295,7 +304,7 @@ export default function InventoryApp({ session }) {
     <tr>
       <th className="border px-4 py-2">SKU</th>
       {userRole === "admin" && <th className="border px-4 py-2">On Hand</th>}
-      <th className="border px-4 py-2">Count</th>
+      <th className="border px-4 py-2">Count</th>{userRole === "admin" && <th className="border px-4 py-2">Description</th>}
     </tr>
   </thead>
   <tbody>
@@ -323,7 +332,7 @@ export default function InventoryApp({ session }) {
           ) : (
             <span className="block text-gray-600">{entry.count ?? "NA"}</span>
           )}
-        </td>
+        </td>{userRole === "admin" && (<td className="border px-4 py-2 text-left">{entry.description}</td>)}
       </tr>
     ))}
   </tbody>
